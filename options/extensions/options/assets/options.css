@@ -1,0 +1,51 @@
+.product-options {
+  margin: 20px 0;
+  padding: 15px;
+  border: 1px solid #e6e6e6;
+  border-radius: 5px;
+  background-color: #f9f9f9;
+}
+
+.product-option {
+  margin-bottom: 15px;
+}
+
+.product-option__label {
+  display: block;
+  margin-bottom: 5px;
+  font-weight: 600;
+}
+
+.product-option__required {
+  color: #d82c0d;
+  margin-left: 3px;
+}
+
+.product-option__input {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  transition: border-color 0.2s ease;
+}
+
+.product-option__input:focus {
+  border-color: #5c6ac4;
+  outline: none;
+}
+
+.product-option-set__title {
+  margin: 0 0 10px 0;
+  font-size: 1.2em;
+}
+
+.product-option-set__description {
+  margin-bottom: 15px;
+  color: #666;
+  font-size: 0.9em;
+}
+
+.product-option--text,
+.product-option--number {
+  max-width: 400px;
+}

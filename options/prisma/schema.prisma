@@ -1,0 +1,57 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
+// enough when changing adapters.
+// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Session {
+  id            String    @id
+  shop          String
+  state         String
+  isOnline      Boolean   @default(false)
+  scope         String?
+  expires       DateTime?
+  accessToken   String
+  userId        BigInt?
+  firstName     String?
+  lastName      String?
+  email         String?
+  accountOwner  Boolean   @default(false)
+  locale        String?
+  collaborator  Boolean?  @default(false)
+  emailVerified Boolean?  @default(false)
+}
+
+model ProductOptionSet {
+  id          String   @id @default(cuid())
+  name        String
+  shop        String
+  active      Boolean  @default(true)
+  applyToAll  Boolean  @default(true)  // 新增：是否应用到所有商品
+  productTags String?                   // 新增：商品标签（逗号分隔）
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  options     Option[] // 关联到选项配置
+}
+
+model Option {
+  id                String           @id @default(cuid())
+  name              String
+  type              String
+  required          Boolean          @default(false)
+  values            String?          // 存储选项值JSON，包含图片和文本
+  dependOnOptionId  String?          // 依赖的选项ID
+  showWhenValue     String?          // 当依赖选项值等于此值时显示
+  productOptionSet  ProductOptionSet @relation(fields: [productOptionSetId], references: [id], onDelete: Cascade)
+  productOptionSetId String
+  price             Float?           // 添加价格字段
+}

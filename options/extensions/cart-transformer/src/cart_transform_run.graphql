@@ -1,0 +1,27 @@
+query CartTransformRunInput {
+  cart {
+    lines {
+      id
+      quantity
+      attribute(key: "_all_properties") {
+        value
+      }
+      priceAttribute: attribute(key: "_price") {
+        value
+      }
+      cost {
+        amountPerQuantity {
+          amount
+        }
+      }
+      merchandise {
+        ... on ProductVariant {
+          id
+          product {
+            title
+          }
+        }
+      }
+    }
+  }
+}

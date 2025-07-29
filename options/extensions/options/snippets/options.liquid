@@ -1,0 +1,864 @@
+{% comment %}
+  产品自定义选项渲染片段
+  参数:
+  - product: 当前产品对象
+  - shop: 商店域名
+{% endcomment %}
+
+<div class="product-options" data-product-options>
+  <div class="product-options__loading" data-options-loading>
+    <span>Loading product options...</span>
+  </div>
+  <div class="product-options__content" data-options-content style="display: none;"></div>
+  <div class="product-options__error" data-options-error style="display: none;">
+    <span>Unable to load product options</span>
+  </div>
+</div>
+
+<!-- 引入渲染函数库 -->
+<script src="{{ 'option-renderers.js' | asset_url }}" defer></script>
+
+<!-- 引入样式 -->
+{{ 'option-styles.css' | asset_url | stylesheet_tag }}
+
+<script>
+  (function() {
+    // ==================== 工具函数 ====================
+
+    // 检查是否有我们的自定义选项
+    function hasOurCustomOptions() {
+      const optionsContainer = document.querySelector("[data-product-options]");
+      if (!optionsContainer) return false;
+
+      const ourOptions = optionsContainer.querySelectorAll("input, select, textarea");
+      return ourOptions.length > 0;
+    }
+
+    // 查找购物车按钮
+    function findAddToCartButtons() {
+      return document.querySelectorAll('button[name="add"], input[name="add"], button.add-to-cart, button.product-form__add-to-cart, form[action*="/cart/add"] button[type="submit"]');
+    }
+
+    // 检查按钮是否已被我们控制
+    function isButtonControlledByUs(button) {
+      return button.hasAttribute("data-our-app-controlled");
+    }
+
+    // 移除按钮的所有事件监听器
+    function removeAllEventListeners(button) {
+      const newButton = button.cloneNode(true);
+      button.parentNode.replaceChild(newButton, button);
+      return newButton;
+    }
+
+    // 标记按钮为我们控制
+    function markButtonAsControlled(button) {
+      button.setAttribute("data-our-app-controlled", "true");
+      button.setAttribute("data-original-onclick", button.getAttribute("onclick") || "");
+      button.removeAttribute("onclick");
+    }
+
+    // ==================== 表单处理函数 ====================
+
+    // 禁用表单默认提交
+    function disableFormSubmission(form) {
+      if (!form) return;
+
+      const originalAction = form.action;
+      const originalMethod = form.method;
+
+      form.setAttribute('data-original-action', originalAction);
+      form.setAttribute('data-original-method', originalMethod);
+      form.removeAttribute('action');
+
+      form.addEventListener('submit', handleFormSubmitIntercept, true);
+    }
+
+    // 拦截表单提交
+    function handleFormSubmitIntercept(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      return false;
+    }
+
+    // 获取表单数据
+    function getFormData(button) {
+      const form = button.closest('form');
+      if (!form) return null;
+
+      const variantIdInput = form.querySelector('input[name="id"], select[name="id"]');
+      if (!variantIdInput) return null;
+
+      return {
+        form: form,
+        variantId: variantIdInput.value,
+        quantity: form.querySelector('input[name="quantity"]')?.value || 1
+      };
+    }
+
+    // ==================== 选项处理函数 ====================
+
+    // 收集自定义选项属性（修复单选按钮问题）
+    function collectCustomProperties() {
+      const optionsContainer = document.querySelector("[data-product-options]");
+      if (!optionsContainer) return { properties: {}, isValid: true };
+
+      const properties = {};
+      const ourOptionInputs = optionsContainer.querySelectorAll("input, select, textarea");
+      let allRequiredFilled = true;
+
+      // 清除之前的错误提示
+      clearValidationErrors(optionsContainer);
+
+      ourOptionInputs.forEach((input) => {
+        // 先验证必填项
+        if (!validateRequiredField(input)) {
+          allRequiredFilled = false;
+        }
+
+        // 然后收集属性值 - 关键修复在这里
+        if (shouldCollectInputValue(input)) {
+          addPropertyFromInput(input, properties);
+        }
+      });
+
+      // 如果验证失败，滚动到第一个错误
+      if (!allRequiredFilled) {
+        scrollToFirstError(optionsContainer);
+      }
+
+      return { properties, isValid: allRequiredFilled };
+    }
+
+    // 判断是否应该收集输入项的值（新增函数）
+    function shouldCollectInputValue(input) {
+      if (input.type === 'radio') {
+        // 单选按钮：必须被选中
+        return input.checked;
+      } else if (input.type === 'checkbox') {
+        // 复选框：必须被选中
+        return input.checked;
+      } else {
+        // 其他输入类型（text, select, textarea等）：必须有值
+        return input.value && input.value.trim() !== '';
+      }
+    }
+
+    // 从输入框添加属性（简化版）
+    function addPropertyFromInput(input, properties) {
+      const match = input.name.match(/properties\[(.*?)\]/);
+      if (match && match[1]) {
+        const propertyName = match[1];
+        properties[propertyName] = input.value;
+      }
+    }
+
+    // 验证必填字段（针对单选按钮组优化）
+    function validateRequiredField(input) {
+      if (input.hasAttribute("required")) {
+        if (input.type === 'radio') {
+          // 对于单选按钮，检查同名的任何一个是否被选中
+          const radioGroup = document.querySelectorAll(`input[name="${input.name}"]`);
+          const hasChecked = Array.from(radioGroup).some(radio => radio.checked);
+
+          if (!hasChecked) {
+            // 只对第一个单选按钮显示错误（避免重复显示）
+            if (input === radioGroup[0]) {
+              showFieldError(input);
+            }
+            return false;
+          } else {
+            // 清除所有同组单选按钮的错误
+            radioGroup.forEach(radio => clearFieldError(radio));
+            return true;
+          }
+        } else if (input.type === 'checkbox') {
+          // 复选框必须被选中
+          if (!input.checked) {
+            showFieldError(input);
+            return false;
+          } else {
+            clearFieldError(input);
+            return true;
+          }
+        } else {
+          // 其他输入类型必须有值
+          if (!input.value || input.value.trim() === '') {
+            showFieldError(input);
+            return false;
+          } else {
+            clearFieldError(input);
+            return true;
+          }
+        }
+      } else {
+        // 非必填项总是通过验证
+        clearFieldError(input);
+        return true;
+      }
+    }
+
+    // 显示字段错误
+    function showFieldError(input) {
+      input.classList.add("error");
+
+      const optionContainer = input.closest(".product-option");
+      if (optionContainer && !optionContainer.querySelector(".error-message")) {
+        const errorMsg = document.createElement("div");
+        errorMsg.className = "error-message";
+        errorMsg.textContent = "This field is required";
+        errorMsg.style.color = "#d82c0d";
+        errorMsg.style.marginTop = "5px";
+        errorMsg.style.fontSize = "0.85em";
+        optionContainer.appendChild(errorMsg);
+      }
+    }
+
+    // 清除字段错误
+    function clearFieldError(input) {
+      input.classList.remove("error");
+      const optionContainer = input.closest(".product-option");
+      const errorMsg = optionContainer?.querySelector(".error-message");
+      if (errorMsg) errorMsg.remove();
+    }
+
+    // 清除所有验证错误
+    function clearValidationErrors(container) {
+      const errors = container.querySelectorAll(".error-message");
+      errors.forEach(error => error.remove());
+
+      const errorInputs = container.querySelectorAll(".error");
+      errorInputs.forEach(input => input.classList.remove("error"));
+    }
+
+    // 滚动到第一个错误
+    function scrollToFirstError(container) {
+      const firstError = container.querySelector(".error");
+      if (firstError) {
+        firstError.focus();
+        firstError.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }
+
+    // 从输入框添加属性
+    function addPropertyFromInput(input, properties) {
+      const match = input.name.match(/properties\[(.*?)\]/);
+      if (match && match[1]) {
+        properties[match[1]] = input.value;
+      }
+    }
+
+    // ==================== 价格计算函数 ====================
+
+    // 计算价格调整
+    function calculatePriceAdjustment() {
+      let priceAdjustment = 0;
+      const pricedOptions = document.querySelectorAll(".product-option[data-price]");
+
+      pricedOptions.forEach((option) => {
+        const price = getPriceFromOption(option);
+        if (price > 0) {
+          priceAdjustment += price;
+        }
+      });
+
+      return priceAdjustment;
+    }
+
+    // 从选项获取价格
+    function getPriceFromOption(option) {
+      const input = option.querySelector("input:checked") ||
+                    option.querySelector("select, textarea, input[type='text'], input[type='number']");
+
+      if (!input || (input.type !== 'checkbox' && input.type !== 'radio' && !input.value)) return 0;
+      if (input.type === 'checkbox' && !input.checked) return 0;
+
+      return parseFloat(option.dataset.price) || 0;
+    }
+
+    // 添加价格属性到properties
+    function addPriceToProperties(properties, priceAdjustment) {
+      if (priceAdjustment > 0) {
+        properties["_price"] = priceAdjustment.toFixed(2);
+      }
+
+      properties["_all_properties"] = JSON.stringify(properties);
+
+      return properties;
+    }
+
+    // ==================== 按钮状态函数 ====================
+
+    // 设置按钮加载状态
+    function setButtonLoadingState(button) {
+      button.classList.add('loading');
+      if (button.tagName === 'BUTTON') {
+        const originalText = button.textContent;
+        button.setAttribute('data-original-text', originalText);
+        button.textContent = 'Adding...';
+        button.disabled = true;
+      }
+    }
+
+    // 重置按钮状态
+    function resetButtonState(button) {
+      button.classList.remove('loading');
+      if (button.tagName === 'BUTTON') {
+        const originalText = button.getAttribute('data-original-text');
+        if (originalText) {
+          button.textContent = originalText;
+        }
+        button.disabled = false;
+      }
+    }
+
+    // ==================== 购物车API函数 ====================
+
+    // 添加到购物车
+    function addToCartAPI(variantId, quantity, properties) {
+      const formData = {
+        items: [{
+          id: variantId,
+          quantity: quantity,
+          properties: properties
+        }]
+      };
+
+      return fetch('/cart/add.js', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(formData)
+      })
+      .then(response => {
+        if (!response.ok) {
+          return response.json().then(data => {
+            throw new Error(data.description || "Failed to add to cart");
+          });
+        }
+        return response.json();
+      });
+    }
+
+    // 处理添加成功
+    function handleAddToCartSuccess(data, button) {
+      showMessage("Successfully added!", "success");
+      resetButtonState(button);
+
+      setTimeout(() => {
+        window.location.href = '/cart';
+      }, 1000);
+    }
+
+    // 处理添加失败
+    function handleAddToCartError(error, button) {
+      showMessage(error.message || "Failed to add to cart", "error");
+      resetButtonState(button);
+    }
+
+    // ==================== 事件处理函数 ====================
+
+    // 我们的按钮点击处理器
+    function handleOurButtonClick(e) {
+      // 立即阻止所有事件传播
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+
+      // 执行我们的逻辑
+      processAddToCart(e.target);
+    }
+
+    // 处理加入购物车流程
+    function processAddToCart(button) {
+      // 获取表单数据
+      const formData = getFormData(button);
+      if (!formData) {
+        return;
+      }
+
+      // 收集自定义属性
+      const { properties, isValid } = collectCustomProperties();
+      if (!isValid) {
+        return;
+      }
+
+      // 计算价格调整
+      const priceAdjustment = calculatePriceAdjustment();
+      const finalProperties = addPriceToProperties(properties, priceAdjustment);
+
+      // 设置加载状态
+      setButtonLoadingState(button);
+
+      // 添加到购物车
+      addToCartAPI(formData.variantId, parseInt(formData.quantity), finalProperties)
+        .then(data => handleAddToCartSuccess(data, button))
+        .catch(error => handleAddToCartError(error, button));
+    }
+
+    // ==================== 按钮控制函数 ====================
+
+    // 控制单个按钮
+    function controlSingleButton(button, index) {
+      if (!hasOurCustomOptions()) {
+        return;
+      }
+
+      if (isButtonControlledByUs(button)) {
+        return;
+      }
+
+      // 移除所有现有事件监听器
+      const newButton = removeAllEventListeners(button);
+
+      // 标记和配置按钮
+      markButtonAsControlled(newButton);
+
+      // 添加我们的事件监听器
+      newButton.addEventListener('click', handleOurButtonClick, true);
+
+      // 禁用表单默认提交
+      const form = newButton.closest('form');
+      disableFormSubmission(form);
+    }
+
+    // 强力接管所有加入购物车按钮
+    function forceControlAddToCartButtons() {
+      const addToCartButtons = findAddToCartButtons();
+      if (addToCartButtons.length === 0) {
+        return;
+      }
+
+      addToCartButtons.forEach(controlSingleButton);
+    }
+
+    // ==================== DOM监控函数 ====================
+
+    // 检查是否需要重新控制按钮
+    function shouldRecontrolButtons(node) {
+      if (node.nodeType !== 1) return false;
+
+      return node.matches && (
+        node.matches('button[name="add"]') ||
+        node.matches('form[action*="/cart/add"]') ||
+        node.querySelector('button[name="add"]') ||
+        node.matches('script[src*="optis"]') ||
+        node.matches('[data-optis-app]')
+      );
+    }
+
+    // 处理DOM变化
+    function handleDOMChanges(mutations) {
+      let needsRecontrol = false;
+
+      mutations.forEach((mutation) => {
+        if (mutation.type === 'childList') {
+          mutation.addedNodes.forEach((node) => {
+            if (shouldRecontrolButtons(node)) {
+              needsRecontrol = true;
+            }
+          });
+        }
+      });
+
+      if (needsRecontrol) {
+        setTimeout(forceControlAddToCartButtons, 500);
+      }
+    }
+
+    // 设置按钮监控
+    function setupButtonMonitoring() {
+      const observer = new MutationObserver(handleDOMChanges);
+
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['onclick', 'data-optis-app']
+      });
+    }
+
+    // ==================== 初始化函数 ====================
+
+    // 初始化按钮控制
+    function initializeButtonControl() {
+      setTimeout(() => {
+        forceControlAddToCartButtons();
+        setupButtonMonitoring();
+      }, 100);
+    }
+
+    // 等待渲染函数库加载完成
+    function init() {
+      if (typeof window.OptionRenderers === 'undefined') {
+        console.error("Rendering library not loaded");
+        document.querySelector('.product-options__error').style.display = 'block';
+        document.querySelector('.product-options__loading').style.display = 'none';
+        return;
+      }
+
+      loadActiveProductOptions();
+    }
+
+    // 加载活跃的选项数据
+    function loadActiveProductOptions() {
+      const optionsContainer = document.querySelector('.product-options');
+      if (!optionsContainer) {
+        console.error("找不到选项容器元素");
+        return;
+      }
+
+      const loadingEl = optionsContainer.querySelector('[data-options-loading]');
+      const contentEl = optionsContainer.querySelector('[data-options-content]');
+      const errorEl = optionsContainer.querySelector('[data-options-error]');
+
+      const shopDomain = "{{ shop.permanent_domain }}";
+      const productTags = "{{ product.tags | join: ',' }}";
+
+      let reqUrl = `/apps/proxy/options-active?shop=${shopDomain}`;
+      if (productTags) {
+        reqUrl += `&productTags=${encodeURIComponent(productTags)}`;
+      }
+
+      loadingEl.style.display = 'block';
+      contentEl.style.display = 'none';
+      errorEl.style.display = 'none';
+
+      fetch(reqUrl)
+        .then(response => {
+          if (!response.ok) {
+            throw new Error('Network request failed');
+          }
+          return response.json();
+        })
+        .then(data => {
+          if (data.error) {
+            throw new Error(data.error);
+          }
+
+          if (!data.optionSets || data.optionSets.length === 0) {
+            loadingEl.style.display = 'none';
+            return;
+          }
+
+          // 渲染选项逻辑...
+          let optionsHtml = '';
+          data.optionSets.forEach(optionSet => {
+            if (optionSet.active) {
+              optionsHtml += `<div class="product-option-set" data-option-set-id="${optionSet.id}">`;
+
+              if (optionSet.options && optionSet.options.length > 0) {
+                const allOptions = optionSet.options;
+                const sortedOptions = [...optionSet.options].sort((a, b) => {
+                  if (a.type === 'radio' && b.type !== 'radio') return -1;
+                  if (a.type !== 'radio' && b.type === 'radio') return 1;
+                  return 0;
+                });
+
+                sortedOptions.forEach(option => {
+                  const renderer = window.OptionRenderers[option.type] || window.OptionRenderers.text;
+                  optionsHtml += renderer(option, allOptions);
+                });
+              }
+
+              optionsHtml += `</div>`;
+            }
+          });
+
+          contentEl.innerHTML = optionsHtml;
+          loadingEl.style.display = 'none';
+          contentEl.style.display = 'block';
+
+          // 初始化各种功能
+          initializeCustomDropdowns();
+          initializeButtonControl(); // 使用我们的按钮控制
+          initializeConditionalDisplay();
+        })
+        .catch(error => {
+          console.error('Failed to load product options:', error);
+          loadingEl.style.display = 'none';
+          errorEl.style.display = 'block';
+          errorEl.querySelector('span').textContent = `Unable to load product options: ${error.message}`;
+        });
+    }
+
+    // ==================== 启动初始化 ====================
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", function() {
+        setTimeout(init, 100);
+      });
+    } else {
+      setTimeout(init, 100);
+    }
+
+    // ==================== 消息函数 ====================
+
+    // 显示消息函数
+    function showMessage(message, type) {
+      // 创建消息元素
+      const messageEl = document.createElement('div');
+      messageEl.className = `cart-message cart-message--${type}`;
+      messageEl.innerHTML = message;
+      messageEl.style.position = 'fixed';
+      messageEl.style.top = '20px';
+      messageEl.style.right = '20px';
+      messageEl.style.padding = '10px 20px';
+      messageEl.style.borderRadius = '4px';
+      messageEl.style.zIndex = '1000';
+      messageEl.style.fontSize = '14px';
+
+      if (type === 'success') {
+        messageEl.style.backgroundColor = '#4caf50';
+        messageEl.style.color = 'white';
+      } else {
+        messageEl.style.backgroundColor = '#f44336';
+        messageEl.style.color = 'white';
+      }
+
+      // 添加到页面
+      document.body.appendChild(messageEl);
+
+      // 自动移除
+      setTimeout(() => {
+        messageEl.style.opacity = '0';
+        messageEl.style.transition = 'opacity 0.5s ease';
+        setTimeout(() => {
+          document.body.removeChild(messageEl);
+        }, 500);
+      }, 3000);
+    }
+
+    // ==================== 自定义下拉菜单 ====================
+
+    // 初始化自定义下拉菜单
+    function initializeCustomDropdowns() {
+      const wrappers = document.querySelectorAll('.custom-select-wrapper');
+
+      wrappers.forEach(wrapper => {
+        const trigger = wrapper.querySelector('.custom-select-trigger');
+        const options = wrapper.querySelector('.custom-options');
+        const nativeSelect = wrapper.closest('.product-option__dropdown-container').querySelector('.native-select');
+        const isThumbnailSelect = wrapper.classList.contains('thumbnail-select');
+
+        // 点击触发器显示/隐藏选项
+        trigger.addEventListener('click', function(e) {
+          e.stopPropagation();
+          wrapper.classList.toggle('open');
+        });
+
+        // 点击选项
+        const optionElements = wrapper.querySelectorAll('.custom-option');
+        optionElements.forEach(option => {
+          option.addEventListener('click', function(e) {
+            e.stopPropagation();
+
+            const value = this.getAttribute('data-value');
+            const price = this.getAttribute('data-price') || '0';
+
+            // 更新触发器显示
+            if (isThumbnailSelect) {
+              // 缩略图下拉菜单的特殊处理
+              updateThumbnailTrigger(trigger, this, value, price);
+            } else {
+              // 普通下拉菜单
+              trigger.textContent = value || 'Please select...';
+            }
+
+            // 更新原生select的值和价格数据
+            nativeSelect.value = value;
+            if (price && price !== '0') {
+              nativeSelect.setAttribute('data-selected-price', price);
+            } else {
+              nativeSelect.removeAttribute('data-selected-price');
+            }
+
+            // 触发change事件
+            const event = new Event('change', { bubbles: true });
+            nativeSelect.dispatchEvent(event);
+
+            // 关闭下拉菜单
+            wrapper.classList.remove('open');
+          });
+        });
+
+        // 点击页面其他地方关闭下拉菜单
+        document.addEventListener('click', function() {
+          wrapper.classList.remove('open');
+        });
+      });
+    }
+
+    // 更新缩略图触发器显示
+    function updateThumbnailTrigger(trigger, selectedOption, value, price) {
+      const triggerContent = trigger.querySelector('.trigger-content');
+      const triggerImage = trigger.querySelector('.trigger-image-placeholder');
+      const triggerTextContainer = trigger.querySelector('.trigger-text-container');
+      const triggerText = trigger.querySelector('.trigger-text');
+      const triggerPrice = trigger.querySelector('.trigger-price');
+
+      if (!triggerContent || !triggerImage || !triggerTextContainer || !triggerText) return;
+
+      if (value) {
+        // 获取选中项的图片和文本
+        const optionImage = selectedOption.querySelector('.option-image-container img');
+        const optionText = selectedOption.querySelector('.option-text');
+
+        // 更新图片
+        if (optionImage) {
+          triggerImage.innerHTML = `<img src="${optionImage.src}" alt="${value}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 3px;">`;
+        } else {
+          triggerImage.innerHTML = '<span class="placeholder-text">No image</span>';
+        }
+
+        // 更新文本
+        triggerText.textContent = optionText ? optionText.textContent : value;
+
+        // 更新价格显示
+        if (triggerPrice) {
+          const priceValue = parseFloat(price);
+          if (priceValue > 0) {
+            triggerPrice.textContent = `(+$${priceValue.toFixed(2)})`;
+            triggerPrice.style.display = 'block';
+          } else {
+            triggerPrice.style.display = 'none';
+          }
+        }
+      } else {
+        // 重置为默认状态
+        triggerImage.innerHTML = '<span class="placeholder-text">Please select...</span>';
+        triggerText.textContent = 'Please select...';
+        if (triggerPrice) {
+          triggerPrice.style.display = 'none';
+        }
+      }
+    }
+
+    // 修改价格计算函数，支持dropdown_thumbnail的个别选项价格
+    function calculatePriceAdjustment() {
+      let priceAdjustment = 0;
+
+      // 处理统一价格的选项（dropdown, text, number）
+      const pricedOptions = document.querySelectorAll(".product-option[data-price]");
+      pricedOptions.forEach((option) => {
+        const price = getPriceFromOption(option);
+        if (price > 0) {
+          priceAdjustment += price;
+        }
+      });
+
+      // 处理dropdown_thumbnail类型的个别选项价格
+      const thumbnailDropdowns = document.querySelectorAll(".product-option--dropdown-thumbnail .native-select");
+      thumbnailDropdowns.forEach((select) => {
+        const selectedPrice = select.getAttribute('data-selected-price');
+        if (selectedPrice && select.value) {
+          priceAdjustment += parseFloat(selectedPrice) || 0;
+        }
+      });
+
+      return priceAdjustment;
+    }
+
+    // ==================== 条件显示逻辑 ====================
+
+    // 添加客户端条件显示逻辑
+    function initializeConditionalDisplay() {
+      // 初始隐藏所有条件选项
+      document.querySelectorAll('.conditional-option').forEach(el => {
+        el.style.display = 'none';
+      });
+
+      // 为所有单选按钮添加change事件
+      document.querySelectorAll('input[type="radio"]').forEach(radio => {
+        radio.addEventListener('change', handleRadioChange);
+      });
+
+      // 页面加载时检查一次
+      document.querySelectorAll('input[type="radio"]:checked').forEach(radio => {
+        handleRadioChange({ target: radio });
+      });
+
+      function handleRadioChange(event) {
+        const radio = event.target;
+        const optionId = radio.getAttribute('data-option-id');
+        const selectedValue = radio.value;
+
+        // 查找依赖此单选按钮的条件选项
+        document.querySelectorAll(`.conditional-option[data-depend-on="${optionId}"]`).forEach(el => {
+          const expectedValue = el.getAttribute('data-expected-value');
+
+          // 如果选中值匹配预期值，则显示；否则隐藏
+          if (selectedValue === expectedValue) {
+            el.style.display = 'block';
+          } else {
+            el.style.display = 'none';
+
+            // 清除隐藏选项中的输入值
+            el.querySelectorAll('input, select, textarea').forEach(input => {
+              if (input.type === 'radio' || input.type === 'checkbox') {
+                input.checked = false;
+              } else {
+                input.value = '';
+              }
+            });
+          }
+        });
+      }
+    }
+
+  })();
+</script>
+
+<style>
+  .product-options {
+    margin: 20px 0;
+  }
+
+  .product-option {
+    margin-bottom: 15px;
+  }
+
+  .product-option__label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+  }
+
+  .product-option__required {
+    color: #d82c0d;
+  }
+
+  .product-option__input {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+  }
+
+  .product-option__input.error {
+    border-color: #d82c0d;
+    background-color: #fff8f8;
+  }
+
+  .product-option-set__title {
+    margin-bottom: 10px;
+  }
+
+  .product-option-set__description {
+    margin-bottom: 15px;
+    color: #666;
+  }
+
+  .error-message {
+    color: #d82c0d;
+    font-size: 0.85em;
+    margin-top: 5px;
+  }
+
+  .cart-message {
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+  }
+</style>
+

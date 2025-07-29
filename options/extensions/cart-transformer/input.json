@@ -1,0 +1,27 @@
+{
+  "cart": {
+    "lines": [
+      {
+        "id": "gid://shopify/CartLine/1",
+        "quantity": 2,
+        "attribute": {
+          "value": "{\"颜色\":\"红色\",\"尺寸\":\"M\",\"个性化文字\":\"Hello World\",\"礼品包装\":\"是\"}"
+        },
+        "priceAttribute": {
+          "value": "5.00"
+        },
+        "cost": {
+          "totalAmount": {
+            "amount": "29.99"
+          }
+        },
+        "merchandise": {
+          "id": "gid://shopify/ProductVariant/40774582403137",
+          "product": {
+            "title": "经典T恤"
+          }
+        }
+      }
+    ]
+  }
+}

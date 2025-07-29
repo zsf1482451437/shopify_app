@@ -1,0 +1,41 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "84179925f56dcd207ff9ff58b4265d41"
+name = "TT-Options"
+handle = "options-11"
+application_url = "https://burst-object-commit-mods.trycloudflare.com"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = true
+include_config_on_deploy = true
+
+[webhooks]
+api_version = "2025-07"
+
+  [[webhooks.subscriptions]]
+  uri = "pubsub://symbolic-envoy-461209-d5:tt528"
+  compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/scopes_update" ]
+  uri = "https://foods-household-linear-chorus.trycloudflare.com/webhooks/app/scopes_update"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/uninstalled" ]
+  uri = "https://foods-household-linear-chorus.trycloudflare.com/webhooks/app/uninstalled"
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "write_cart_transforms, write_products"
+
+[auth]
+redirect_urls = ["https://burst-object-commit-mods.trycloudflare.com/auth/callback", "https://burst-object-commit-mods.trycloudflare.com/auth/shopify/callback", "https://burst-object-commit-mods.trycloudflare.com/api/auth/callback"]
+
+[app_proxy]
+url = "https://burst-object-commit-mods.trycloudflare.com/api"
+subpath = "proxy"
+prefix = "apps"
+
+[pos]
+embedded = false
